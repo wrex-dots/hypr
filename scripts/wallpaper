@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# Script configuration
+set -e
+config=${XDG_CONFIG_HOME:-$HOME/.config/sway}
+wppdir="$config/wallpapers"
+linkname="swaybg"
+linkpath="$config/$linkname"
+
+
+
+# Helper functions
+out() { printf "$1 $2\n" "${@:3}"; } >&2
+warn() {  out "==> WARN: " "$@"; }
+error() { out "==> ERROR:" "$@"; }
+die() { error "$@"; exit 1; }
+say() { if [ "${flags["verbose"]}" ]; then out "==> INFO: " "$@"; fi; }
+
+
+# Read the CLI arguments and set corresponding flags
+#
+# Using the flag as a value for its spot in the array
+# allows for better clarity when run with `bash -x`
+declare -A flags
+while getopts ':cDd:i:lnrquvw' flag; do
+    case $flag in
+        i) # Provide a path to the image to use
+           # Implies -l
+           # Overrides -r
+            if [ "${flags["randomise"]}" ]; then
+                warn "-i overrides -r"
+                unset flags["randomise"]
+            fi
+            flags["image"]=$OPTARG
+            ;;
+        c) # Remove any file created by this program
+            flags["cleanup"]="c"
+            ;;
+        d) # Indicate the location from which to fetch the wallpaper list
+           # Implies -r
+            wppdir=$OPTARG
+            flags["randomise"]="r"
+            ;;
+        l) # Load the linked wallpaper
+            flags["load"]="l"
+            ;;
+        n) # Disable loading the wallpaper after creating the link
+           flags["noload"]="n"
+            ;;
+        r) # Select a file at random in $wppdir
+           # Be careful to only have images in there !
+           # Implies -l
+            if [ "${flags["image"]}" ]; then
+                warn "-i overrides -r"
+            else
+                flags["randomise"]="r"
+            fi
+            ;;
+        q) # Do not print anything
+            flags["quiet"]="q"
+            ;;
+        u) # Do not actually make the changes
+            flags["dryrun"]="u"
+            ;;
+        v) # Verbose
+            flags["verbose"]="v"
+            ;;
+        D) # Reload Dunst config
+            flags["dunst"]="D"
+            ;;
+        w) # Invoke Wal with the current wallpaper
+            flags["wal"]="w"
+            ;;
+        :)
+            die '%s: option requires an argument -- '\''%s'\' "${0##*/}" "$OPTARG"
+            ;;
+        ?)
+            die '%s: invalid option -- '\''%s'\' "${0##*/}" "$OPTARG"
+            ;;
+    esac
+done
+
+if [ "${flags["cleanup"]}" ]; then
+    say "Remove '$linkpath'."
+    if [ ! "${flags["dryrun"]}" ]; then
+        rm -f "$linkpath"
+    fi
+fi
+
+_link() {
+    say "Create new link -> '${flags["image"]}'"
+    if [ ! "${flags["dryrun"]}" ]; then
+        ln -sf "${flags["image"]}" "$linkpath"
+    fi
+    if [ ! "${flags["noload"]}" ]; then
+        flags["load"]="l"
+    fi
+}
+
+if [ "${flags["randomise"]}" ]; then
+    flags["image"]=$(find "$wppdir" -type f | shuf -n1)
+fi
+
+if [ "${flags["image"]}" ]; then
+    _link
+elif test -L "$linkpath"; then
+    flags["image"]=$(realpath "$linkpath")
+fi
+
+if [ "${flags["load"]}" ]; then
+    say "Load currently linked wallpaper."
+    if [ ! "${flags["dryrun"]}" ]; then
+        swaymsg -q output '*' bg "$linkpath" fill
+    fi
+fi
+
+if [ "${flags["wal"]}" ]; then
+    say "Invoke wal on current wallpaper..."
+    if ( which wal >/dev/null ); then
+        wal -qni "${flags["image"]}"
+    else
+        warn '`wal` is not installed'
+    fi
+fi
+
+if [ "${flags["dunst"]}" ]; then
+    say "Regenerate Dunst config and restart the daemon..."
+    if ( ! which dunst >/dev/null ); then
+        warn '`dunst` is not installed.'
+    else
+        if ( ! which gendunstrc >/dev/null ); then
+            warn "`gendunstrc` not found. Please make sure you have it and it's in your path."
+        else
+            killall -qw dunst
+            gendunstrc
+            nohup dunst > ~/.cache/dunst-session.log 2>&1 &
+            disown $!
+        fi
+    fi
+fi
+
+if [ ! "${flags["quiet"]}" ]; then
+    say "Display canonical path to current wallpaper."
+    echo "${flags["image"]:=$(realpath "$linkpath")}"
+    wal --p >&2
+fi
+
+exit 0
