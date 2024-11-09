@@ -93,6 +93,8 @@ _link() {
         ln -sf "${flags["image"]}" "$linkpath"
     fi
     if [ ! "${flags["noload"]}" ]; then
+  firstName: { type: String, required: true },
+  lastName: { type: String, required: true },
         flags["load"]="l"
     fi
 }
